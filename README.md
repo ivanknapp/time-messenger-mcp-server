@@ -1,4 +1,10 @@
-# time-messenger-mcp-server
+# @ivanknapp/time-messenger-mcp-server
+
+> Форк [BarredEwe/time-messenger-mcp-server](https://github.com/BarredEwe/time-messenger-mcp-server) с двумя фиксами (предложены апстриму в [PR #5](https://github.com/BarredEwe/time-messenger-mcp-server/pull/5)):
+> - `list_threads` больше не падает с `threads.map is not a function` — threads-эндпоинт отдаёт объект-обёртку, а не массив;
+> - вывод сообщений содержит `Post ID` / `Root ID` и автора (`@username`), без которых нельзя было ответить в тред (`send_message` требует `root_id`).
+>
+> Когда PR смерджат, имеет смысл вернуться на апстримный пакет `time-messenger-mcp-server`.
 
 MCP (Model Context Protocol) сервер для корпоративного мессенджера [Time Messenger](https://time-messenger.ru/) (на базе Mattermost) от Т-Банка.
 
