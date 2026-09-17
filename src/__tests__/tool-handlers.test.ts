@@ -11,6 +11,7 @@ function createMockClient(overrides: Partial<TimeClient> = {}): TimeClient {
   return {
     getMe: vi.fn().mockResolvedValue({ id: 'me', username: 'me' } as User),
     getUser: vi.fn().mockResolvedValue({ id: 'u1', username: 'user1' } as User),
+    getUsersByIds: vi.fn().mockResolvedValue([] as User[]),
     searchUsers: vi.fn().mockResolvedValue([] as User[]),
     getTeamsForUser: vi.fn().mockResolvedValue([] as Team[]),
     getTeam: vi.fn().mockResolvedValue({ id: 't1', display_name: 'Team' } as Team),

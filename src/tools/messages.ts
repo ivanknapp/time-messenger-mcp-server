@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { TimeClient } from '../client/time-client.js';
 import type { Post, PostList } from '../types/time-api.js';
+import { resolveUsernames } from './usernames.js';
 
 export const messageTools = [
   {
@@ -185,33 +186,14 @@ export function extractPosts(postList: PostList): Post[] {
     .reverse();
 }
 
-/**
- * user_id → username. Cached for the process lifetime: usernames rarely
- * change, and without a cache a 100-message page would issue 100 API calls.
- */
-const usernameCache = new Map<string, string>();
-
 export async function resolveAuthors(
   client: TimeClient,
   posts: Post[]
 ): Promise<Map<string, string>> {
-  const userIds = [...new Set(posts.map((post) => post.user_id).filter(Boolean))];
-  const unknownIds = userIds.filter((id) => !usernameCache.has(id));
-
-  await Promise.all(
-    unknownIds.map(async (id) => {
-      try {
-        const user = await client.getUser(id);
-        usernameCache.set(id, user.username || user.nickname || id);
-      } catch {
-        // A deleted user or a profile we cannot read must not break the
-        // message listing, so fall back to the raw id.
-        usernameCache.set(id, id);
-      }
-    })
+  return resolveUsernames(
+    client,
+    posts.map((post) => post.user_id)
   );
-
-  return new Map(userIds.map((id) => [id, usernameCache.get(id) ?? id]));
 }
 
 function formatAuthor(post: Post, authors?: Map<string, string>): string {

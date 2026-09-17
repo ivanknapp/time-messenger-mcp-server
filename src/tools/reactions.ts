@@ -1,25 +1,30 @@
 import { z } from 'zod';
 import type { TimeClient } from '../client/time-client.js';
 import type { Reaction } from '../types/time-api.js';
+import { resolveUsernames } from './usernames.js';
 
 /**
- * The API accepts only emoji *names* (`thumbsup`), never the character itself.
- * Clients naturally pass `👍` or `:thumbsup:`, so the most common characters are
- * translated here and the surrounding colons are stripped.
+ * The API accepts only emoji *names*, never the character itself, and the name
+ * has to be the canonical one — the first short name the server would return
+ * for that character (`👍` is `+1`, not `thumbsup`; `💯` is `100`, not
+ * `one_hundred`). A non-canonical spelling either 400s or, where the alias also
+ * exists, lands as a *separate* reaction: reactions are unique per
+ * (user_id, post_id, emoji_name), so `thumbsup` would sit next to the `+1`
+ * pill the native client writes instead of joining it.
  */
 const EMOJI_CHAR_TO_NAME: Record<string, string> = {
-  '👍': 'thumbsup',
-  '👎': 'thumbsdown',
+  '👍': '+1',
+  '👎': '-1',
   '❤️': 'heart',
   '❤': 'heart',
   '😀': 'grinning',
   '😁': 'grin',
   '😂': 'joy',
-  '🤣': 'rofl',
+  '🤣': 'rolling_on_the_floor_laughing',
   '😊': 'blush',
   '😉': 'wink',
   '😍': 'heart_eyes',
-  '🤔': 'thinking',
+  '🤔': 'thinking_face',
   '😐': 'neutral_face',
   '😢': 'cry',
   '😭': 'sob',
@@ -35,28 +40,44 @@ const EMOJI_CHAR_TO_NAME: Record<string, string> = {
   '✨': 'sparkles',
   '🎉': 'tada',
   '🚀': 'rocket',
-  '💯': 'one_hundred',
+  '💯': '100',
   '✅': 'white_check_mark',
   '☑️': 'ballot_box_with_check',
   '✔️': 'heavy_check_mark',
   '❌': 'x',
   '⚠️': 'warning',
   '👀': 'eyes',
+  '🤞': 'crossed_fingers',
   '🤡': 'clown_face',
-  '💩': 'poop',
+  '💩': 'hankey',
   '🍕': 'pizza',
   '☕': 'coffee',
   '🤯': 'exploding_head',
-  '🥹': 'pleading_face',
+  '🥹': 'face_holding_back_tears',
+};
+
+/**
+ * Same problem from the other side: a caller who types a well-known alias by
+ * name would create a second pill next to the canonical reaction, so the
+ * aliases of the characters above are folded into the canonical name too.
+ */
+const EMOJI_ALIAS_TO_NAME: Record<string, string> = {
+  thumbsup: '+1',
+  thumbsdown: '-1',
+  rofl: 'rolling_on_the_floor_laughing',
+  thinking: 'thinking_face',
+  one_hundred: '100',
+  poop: 'hankey',
+  shit: 'hankey',
 };
 
 const EMOJI_NAME_PATTERN = /^[a-z0-9_+-]+$/;
 
 /**
- * Normalizes user input to an emoji name accepted by the API: `:tada:`, `tada`
- * and `🎉` all become `tada`. Unknown characters are rejected explicitly rather
- * than sent through, so the caller gets an actionable message instead of an
- * opaque 400 from the API.
+ * Normalizes user input to the canonical emoji name: `:tada:`, `tada` and `🎉`
+ * all become `tada`, `👍` and `thumbsup` both become `+1`. Unknown characters
+ * are rejected explicitly rather than sent through, so the caller gets an
+ * actionable message instead of an opaque 400 from the API.
  */
 export function normalizeEmojiName(input: string): string {
   const trimmed = input.trim();
@@ -69,18 +90,18 @@ export function normalizeEmojiName(input: string): string {
 
   if (!EMOJI_NAME_PATTERN.test(name)) {
     throw new Error(
-      `Unsupported emoji "${input}". Pass the emoji name instead, e.g. "thumbsup" or ":tada:".`
+      `Unsupported emoji "${input}". Pass the emoji name instead, e.g. "+1" or ":tada:".`
     );
   }
 
-  return name;
+  return EMOJI_ALIAS_TO_NAME[name] ?? name;
 }
 
 export const reactionTools = [
   {
     name: 'add_reaction',
     description:
-      'Add an emoji reaction to a message. Accepts an emoji name ("thumbsup", ":tada:") or a common emoji character ("👍")',
+      'Add an emoji reaction to a message. Accepts an emoji name ("+1", ":tada:") or a common emoji character ("👍")',
     inputSchema: {
       type: 'object',
       properties: {
@@ -91,7 +112,7 @@ export const reactionTools = [
         emoji_name: {
           type: 'string',
           description:
-            'Emoji name without colons (e.g. "thumbsup", "tada"); ":tada:" and common emoji characters are also accepted',
+            'Emoji name without colons (e.g. "+1", "tada"); ":tada:", well-known aliases ("thumbsup") and common emoji characters are also accepted',
         },
       },
       required: ['post_id', 'emoji_name'],
@@ -175,12 +196,16 @@ export const reactionTools = [
 
       const params = schema.parse(args);
       const reactions = await client.getReactions(params.post_id);
+      const authors = await resolveUsernames(
+        client,
+        (reactions ?? []).map((reaction) => reaction.user_id)
+      );
 
       return {
         content: [
           {
             type: 'text',
-            text: formatReactions(reactions),
+            text: formatReactions(reactions, authors),
           },
         ],
       };
@@ -190,9 +215,12 @@ export const reactionTools = [
 
 /**
  * Groups reactions by emoji so the output reads like the messenger UI
- * (`:thumbsup: x3`) instead of one line per user.
+ * (`:+1: x3`) instead of one line per user.
  */
-export function formatReactions(reactions: Reaction[] | null | undefined): string {
+export function formatReactions(
+  reactions: Reaction[] | null | undefined,
+  authors?: Map<string, string>
+): string {
   if (!reactions || reactions.length === 0) {
     return 'No reactions on this message.';
   }
@@ -200,7 +228,8 @@ export function formatReactions(reactions: Reaction[] | null | undefined): strin
   const byEmoji = new Map<string, string[]>();
   for (const reaction of reactions) {
     const users = byEmoji.get(reaction.emoji_name) ?? [];
-    users.push(reaction.user_id);
+    const username = authors?.get(reaction.user_id);
+    users.push(username ? `@${username}` : reaction.user_id);
     byEmoji.set(reaction.emoji_name, users);
   }
 

@@ -160,6 +160,18 @@ export class TimeClient {
     return this.request<User>('GET', `/users/${enc(userId)}`);
   }
 
+  /**
+   * Resolves many profiles in one request. Listing a page of messages needs a
+   * username per author, and one GET /users/{id} per author would open dozens
+   * of connections where a single POST does.
+   *
+   * Ids the server does not know are simply absent from the response — it does
+   * not fail the whole batch.
+   */
+  async getUsersByIds(userIds: string[]): Promise<User[]> {
+    return this.request<User[]>('POST', '/users/ids', userIds);
+  }
+
   async searchUsers(term: string): Promise<User[]> {
     return this.request<User[]>('POST', '/users/search', { term });
   }
