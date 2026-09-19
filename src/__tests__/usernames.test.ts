@@ -28,7 +28,7 @@ describe('resolveUsernames', () => {
     expect(names.get('u2')).toBe('bob');
   });
 
-  it('falls back to nickname, then to the raw id', async () => {
+  it('falls back to nickname, and omits a profile that has no name at all', async () => {
     const getUsersByIds = vi.fn().mockResolvedValue([
       { id: 'u1', username: '', nickname: 'Nick' } as User,
       { id: 'u2', username: '', nickname: '' } as User,
@@ -37,7 +37,9 @@ describe('resolveUsernames', () => {
     const names = await resolveUsernames(createClient(getUsersByIds), ['u1', 'u2']);
 
     expect(names.get('u1')).toBe('Nick');
-    expect(names.get('u2')).toBe('u2');
+    // Callers print the raw id for a missing entry; mapping u2 → 'u2' would
+    // make the formatters render it as '@u2', as if it were a username.
+    expect(names.has('u2')).toBe(false);
   });
 
   it('does not re-request ids that are already cached', async () => {
@@ -58,8 +60,8 @@ describe('resolveUsernames', () => {
     const first = await resolveUsernames(client, ['u1', 'gone']);
     const second = await resolveUsernames(client, ['gone']);
 
-    expect(first.get('gone')).toBe('gone');
-    expect(second.get('gone')).toBe('gone');
+    expect(first.has('gone')).toBe(false);
+    expect(second.has('gone')).toBe(false);
     expect(getUsersByIds).toHaveBeenCalledTimes(1);
   });
 
@@ -73,7 +75,7 @@ describe('resolveUsernames', () => {
     const afterFailure = await resolveUsernames(client, ['u1']);
     const afterRetry = await resolveUsernames(client, ['u1']);
 
-    expect(afterFailure.get('u1')).toBe('u1');
+    expect(afterFailure.has('u1')).toBe(false);
     expect(afterRetry.get('u1')).toBe('alice');
     expect(getUsersByIds).toHaveBeenCalledTimes(2);
   });

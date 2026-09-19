@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { reactionTools, normalizeEmojiName, formatReactions } from '../tools/reactions.js';
+import { clearUsernameCache } from '../tools/usernames.js';
 import type { TimeClient } from '../client/time-client.js';
 import type { Reaction } from '../types/time-api.js';
 
@@ -68,6 +69,7 @@ describe('reactionTools handlers', () => {
 
   beforeEach(() => {
     client = createMockClient();
+    clearUsernameCache();
   });
 
   it('add_reaction calls addReaction with the normalized name', async () => {
@@ -107,6 +109,35 @@ describe('reactionTools handlers', () => {
 
     expect(withReactions.getUsersByIds).toHaveBeenCalledWith(['u1', 'u2']);
     expect(result.content[0].text).toContain(':eyes: x2 (@alice, @bob)');
+  });
+
+  it('get_reactions prints the raw id when a reacting profile cannot be resolved', async () => {
+    const withReactions = {
+      getReactions: vi.fn().mockResolvedValue([
+        { user_id: 'u1', post_id: 'p1', emoji_name: 'eyes', create_at: 1 },
+        { user_id: 'u_missing', post_id: 'p1', emoji_name: 'eyes', create_at: 2 },
+      ] as Reaction[]),
+      getUsersByIds: vi.fn().mockResolvedValue([{ id: 'u1', username: 'alice' }]),
+    } as unknown as TimeClient;
+
+    const tool = findTool('get_reactions');
+    const result = await tool.handler(withReactions, { post_id: 'p1' }, userId);
+
+    expect(result.content[0].text).toContain(':eyes: x2 (@alice, u_missing)');
+  });
+
+  it('get_reactions survives a failed profile lookup', async () => {
+    const withReactions = {
+      getReactions: vi.fn().mockResolvedValue([
+        { user_id: 'u1', post_id: 'p1', emoji_name: 'tada', create_at: 1 },
+      ] as Reaction[]),
+      getUsersByIds: vi.fn().mockRejectedValue(new Error('503 Service Unavailable')),
+    } as unknown as TimeClient;
+
+    const tool = findTool('get_reactions');
+    const result = await tool.handler(withReactions, { post_id: 'p1' }, userId);
+
+    expect(result.content[0].text).toContain(':tada: x1 (u1)');
   });
 
   it('add_reaction rejects a missing post_id', async () => {
